@@ -8,93 +8,96 @@ using System.Net;
 
 public class NetworkMan : MonoBehaviour
 {
-    public UdpClient udp;
-    public GameObject player;
+    public UdpClient udp; // socket
+    public GameObject playerPrefab;
 
-    public string myAddress;
+    private string myAddress = "";
     public Dictionary<string, GameObject> currentPlayers;
-    public List<string> newPlayers, droppedPlayers;
-    public GameState latestGameState;
-    public ListOfPlayers initialSetOfPlayers;
-
-    public MessageType latestMessage;
-    
+    public List<string> newPlayers;
+    public List<string> droppedPlayers;
 
     
+
+    // Start is called before the first frame update
     void Start()
     {
         // Initialize variables
         newPlayers = new List<string>();
         droppedPlayers = new List<string>();
         currentPlayers = new Dictionary<string, GameObject>();
-        initialSetOfPlayers = new ListOfPlayers();
 
         // Connect to client
         udp = new UdpClient();
         Debug.Log("Connecting..."); 
-        //udp.Connect("localhost", 12345);
-        udp.Connect("3.96.206.57", 12345);
-        
-        Byte[] sendBytes = Encoding.ASCII.GetBytes("connect");
+		//udp.Connect("3.96.206.57", 12345);
+        udp.Connect("localhost",12345);
+
+        UpdateMessage message = new UpdateMessage();
+        message.cmd = "connect";
+        string m = JsonUtility.ToJson(message);
+        Byte[] sendBytes = Encoding.ASCII.GetBytes(m);
         udp.Send(sendBytes, sendBytes.Length);
+
         udp.BeginReceive(new AsyncCallback(OnReceived), udp);
 
-        InvokeRepeating("HeartBeat", 1, 1/30f);
+        InvokeRepeating("HeartBeat", 1, 1);
+
+        InvokeRepeating("UpdatePosition", 1, 1.0f/30.0f);
+
+
     }
 
     void OnDestroy(){
         udp.Dispose();
     }
 
+
+    public enum commands{
+        PLAYER_CONNECTED,
+        UPDATE,
+        PLAYER_DISCONNECTED,
+        CONFIRM_IP
+    };
+    
     [Serializable]
-    public struct Position
+    public class MessageType{
+        public commands cmd;
+        public string id;
+    }
+
+    [Serializable]
+    public class UpdateMessage
     {
+        public string cmd;
         public float x;
         public float y;
         public float z;
     }
 
     [Serializable]
-    public class Player{
-        public string id;
-        public Position position;
-    }
-
-    [Serializable]
-    public class ListOfPlayers{
-        public Player[] players;
-        
-        public ListOfPlayers() {
-            players = new Player[0];
-        }
-    }
-
-    [Serializable]
-    public class ListOfDroppedPlayers
+    public class Player
     {
-        public string[] droppedPlayers;
+        [Serializable]
+        public struct receivedPosition
+        {
+            public float X;
+            public float Y;
+            public float Z;
+        }
+        public string id;
+        public receivedPosition position;
     }
+
 
     [Serializable]
     public class GameState{
-        public int pktID;
         public Player[] players;
     }
 
-
-    [Serializable]
-    public class MessageType{
-        public commands cmd;
-    }
-
-    public enum commands{
-        PLAYER_CONNECTED,
-        GAME_UPDATE,
-        PLAYER_DISCONNECTED,
-        CONNECTION_APPROVED,
-        LIST_OF_PLAYERS
-    };
-
+    public MessageType latestMessage;
+    public GameState lastestGameState;
+    public Player spawningPlayer;
+    public Player despawningPlayer;
     void OnReceived(IAsyncResult result){
         // this is what had been passed into BeginReceive as the second parameter:
         UdpClient socket = result.AsyncState as UdpClient;
@@ -107,41 +110,29 @@ public class NetworkMan : MonoBehaviour
         
         // do what you'd like with `message` here:
         string returnData = Encoding.ASCII.GetString(message);
-        //Debug.Log("Got this: " + returnData);
-        
+
         latestMessage = JsonUtility.FromJson<MessageType>(returnData);
-        Debug.Log(returnData);
+
+
         try{
             switch(latestMessage.cmd){
                 case commands.PLAYER_CONNECTED:
-                    ListOfPlayers latestPlayer = JsonUtility.FromJson<ListOfPlayers>(returnData);
-                    foreach (Player player in latestPlayer.players) {
-                        newPlayers.Add(player.id);
-                    }
+                    Debug.Log("Player connected: " + latestMessage.id);
+                    newPlayers.Add(latestMessage.id);
                     break;
-                case commands.GAME_UPDATE:
-                    latestGameState = JsonUtility.FromJson<GameState>(returnData);
+                case commands.UPDATE:
+                    lastestGameState = JsonUtility.FromJson<GameState>(returnData);
+                    Debug.Log("Update; " + returnData);
                     break;
                 case commands.PLAYER_DISCONNECTED:
-                    Debug.Log(returnData);
-                    ListOfDroppedPlayers latestDroppedPlayer = JsonUtility.FromJson<ListOfDroppedPlayers>(returnData);
-                    foreach (string player in latestDroppedPlayer.droppedPlayers) {
-                        droppedPlayers.Add(player);
-                    }
+                    Debug.Log("Player disconnected: " + latestMessage.id);
+                    droppedPlayers.Add(latestMessage.id);
                     break;
-                case commands.CONNECTION_APPROVED:
-                    ListOfPlayers myPlayer = JsonUtility.FromJson<ListOfPlayers>(returnData);
-                    Debug.Log(returnData);
-                    foreach (Player player in myPlayer.players) {
-                        newPlayers.Add(player.id);
-                        myAddress = player.id;
-                    }
-                    break;
-                case commands.LIST_OF_PLAYERS:
-                    initialSetOfPlayers = JsonUtility.FromJson<ListOfPlayers>(returnData);
+                case commands.CONFIRM_IP:
+                    Debug.Log("My address: " + latestMessage.id);
+                    myAddress = latestMessage.id;
                     break;
                 default:
-                    Debug.Log("Error: " + returnData);
                     break;
             }
         }
@@ -153,62 +144,114 @@ public class NetworkMan : MonoBehaviour
         socket.BeginReceive(new AsyncCallback(OnReceived), socket);
     }
 
-    void SpawnPlayers() {
-        if (newPlayers.Count > 0) {
-            foreach (string playerID in newPlayers) {
-                currentPlayers.Add(playerID, Instantiate(player, new Vector3(0, 0, 0), Quaternion.identity));
-                currentPlayers[playerID].name = playerID;
-            }
-            newPlayers.Clear();
-        }
 
-       if (initialSetOfPlayers.players.Length > 0) {
-            Debug.Log(initialSetOfPlayers);
-            foreach (Player player in initialSetOfPlayers.players) {
-                if (player.id == myAddress) 
-                    continue;
-
-                currentPlayers.Add(player.id, Instantiate(this.player, new Vector3(0, 0, 0), Quaternion.identity));
-                currentPlayers[player.id].name = player.id;
+    void SpawnPlayers()
+    {
+        foreach (string s in newPlayers)
+        {
+            if (s==null)
+            { 
             }
-            initialSetOfPlayers.players = new Player[0];
+            else if (!currentPlayers.ContainsKey(s))
+            {
+                currentPlayers.Add(s, Instantiate(playerPrefab, new Vector3(0, 0, 0), Quaternion.identity));
+                currentPlayers[s].GetComponent<NetworkID>().Id = s;
+            }
         }
+        newPlayers.Clear();
     }
+
 
     void UpdatePlayers(){
-       
-
-        if (latestGameState.players.Length > 0) {
-            foreach (NetworkMan.Player player in latestGameState.players) {
-                if (myAddress != player.id) {
-                    currentPlayers[player.id].transform.position = new Vector3(player.position.x, player.position.y, player.position.z);
+        for (int i = 0; i < lastestGameState.players.Length; i++)
+        {
+            if (currentPlayers.ContainsKey(lastestGameState.players[i].id))
+            {
+                if (currentPlayers[lastestGameState.players[i].id] != null)
+                {
+                    if (lastestGameState.players[i].id != myAddress)
+                        currentPlayers[lastestGameState.players[i].id].GetComponent<Transform>().position = new Vector3(lastestGameState.players[i].position.X, lastestGameState.players[i].position.Y, 0);
+                }
+                else
+                {
+                    currentPlayers[lastestGameState.players[i].id] = Instantiate(playerPrefab, new Vector3(0, 0, 0), Quaternion.identity);
                 }
             }
-            latestGameState.players = new Player[0];
+            else
+            {
+                newPlayers.Add(lastestGameState.players[i].id);
+            }
         }
+        
     }
 
-    void DestroyPlayers() {
-        if (droppedPlayers.Count > 0) {
+    void DestroyPlayers()
+    {
+        foreach (string s in droppedPlayers)
+        {
+            if (s == null)
+            {
 
-            foreach (string playerID in droppedPlayers) {
-                Debug.Log(playerID);
-                Debug.Log(currentPlayers[playerID]);
-                Destroy(currentPlayers[playerID].gameObject);
-                currentPlayers.Remove(playerID);
+            }
+            else if (currentPlayers.ContainsKey(s))
+            {
+                Destroy(currentPlayers[s]);
+                Debug.Log("Remove Player from List: " + currentPlayers.Remove(s));
             }
         }
         droppedPlayers.Clear();
     }
-    
-    void HeartBeat(){
-        Byte[] sendBytes = Encoding.ASCII.GetBytes(JsonUtility.ToJson(currentPlayers[myAddress].transform.position));
+
+    void HeartBeat()
+    {
+        UpdateMessage message = new UpdateMessage();
+        message.cmd = "heartbeat";
+        string m = JsonUtility.ToJson(message);
+        Byte[] sendBytes = Encoding.ASCII.GetBytes(m);
         udp.Send(sendBytes, sendBytes.Length);
     }
 
+    void UpdatePosition()
+    {
+        if (currentPlayers.ContainsKey(myAddress))
+        {
+            UpdateMessage message = new UpdateMessage();
+            message.cmd = "updatePosition";
+            message.x = currentPlayers[myAddress].transform.position.x;
+            message.y = currentPlayers[myAddress].transform.position.y;
+            message.z = currentPlayers[myAddress].transform.position.z;
+            string m = JsonUtility.ToJson(message);
+            Byte[] sendBytes = Encoding.ASCII.GetBytes(m);
+            udp.Send(sendBytes, sendBytes.Length);
+        }
+    }
+
     void Update(){
+        
         SpawnPlayers();
         UpdatePlayers();
         DestroyPlayers();
+        
+        if (Input.GetKey(KeyCode.W))
+        {
+            currentPlayers[myAddress].transform.Translate(new Vector3(0.0f, 0.0f, 0.1f));
+        }
+        if (Input.GetKey(KeyCode.S))
+        {
+            currentPlayers[myAddress].transform.Translate(new Vector3(0.0f, 0.0f, -0.1f));
+        }
+        if (Input.GetKey(KeyCode.A))
+        {
+            currentPlayers[myAddress].transform.Translate(new Vector3(-0.1f, 0.0f, 0.0f));
+        }
+        if (Input.GetKey(KeyCode.D))
+        {
+            currentPlayers[myAddress].transform.Translate(new Vector3(0.1f, 0.0f, 0.0f));
+        }
+    }
+
+    void OnApplicationQuit()
+    {
+        OnDestroy();
     }
 }
