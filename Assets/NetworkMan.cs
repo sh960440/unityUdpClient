@@ -170,7 +170,7 @@ public class NetworkMan : MonoBehaviour
                 if (currentPlayers[lastestGameState.players[i].id] != null)
                 {
                     if (lastestGameState.players[i].id != myAddress)
-                        currentPlayers[lastestGameState.players[i].id].GetComponent<Transform>().position = new Vector3(lastestGameState.players[i].position.X, lastestGameState.players[i].position.Y, 0);
+                        currentPlayers[lastestGameState.players[i].id].GetComponent<Transform>().position = new Vector3(lastestGameState.players[i].position.X, lastestGameState.players[i].position.Y, lastestGameState.players[i].position.Z);
                 }
                 else
                 {
